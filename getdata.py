@@ -7,19 +7,20 @@ import random
 from pathlib import Path
 from typing import Dict, Any, List
 import os
+from datetime import datetime
 
 class MedicineDetailsScraper:
     def __init__(self):
         self.headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         }
-        # Define the structure of data to scrape - easy to modify
+        # Structure of data to scrape
         self.data_structure = {
             'uses': {'id': 'uses', 'type': 'text_with_hidden'},
             'side_effects': {'id': 'sideEffects', 'type': 'list'},
             'how_it_works': {'id': 'modeOfAction', 'type': 'text'},
             'consumption': {'id': 'directionsForUse', 'type': 'list'}
-            # New fields, following the same pattern
+            # New fields can be added here following the same pattern
         }
         self.setup_logging()
         self.setup_files()
@@ -33,9 +34,9 @@ class MedicineDetailsScraper:
         )
 
     def setup_files(self):
-        # Create necessary files if they don't exist
+        # Create files if they don't exist
         if not Path('medicine_data.json').exists():
-            self.save_json({})
+            self.save_json({"medicines": []})
         if not Path('scraper_progress.json').exists():
             self.save_state({'last_processed_link': None})
 
@@ -60,7 +61,7 @@ class MedicineDetailsScraper:
                 return json.load(f)
         except Exception as e:
             logging.error(f"Error loading JSON: {str(e)}")
-            return {}
+            return {"medicines": []}
 
     def save_json(self, data: Dict):
         try:
@@ -140,27 +141,34 @@ class MedicineDetailsScraper:
             logging.error(f"Could not find medicine name for URL: {url}")
             return None
 
-        # Check if the main container exists
+        # Check if the main details container exists
         details_container = soup.find('div', class_='DescriptionTabs_root__YOrb_')
         
         medicine_data = {
-            'url': url,
+            "name": medicine_name,
+            "url": url,
+            "details": {
+                "uses": [],
+                "side_effects": [],
+                "how_it_works": "",
+                "consumption": []
+            },
+            "metadata": {
+                "source": "PharmEasy",
+                "last_updated": datetime.now().strftime("%Y-%m-%d")
+            }
         }
 
         # If details container exists, extract all defined fields
         if details_container:
             for field, config in self.data_structure.items():
-                medicine_data[field] = self.extract_section_data(
+                medicine_data['details'][field] = self.extract_section_data(
                     details_container, 
                     config['id'], 
                     config['type']
                 )
-        else:
-            # If details container doesn't exist, set all fields to empty values
-            for field, config in self.data_structure.items():
-                medicine_data[field] = "" if config['type'] == 'text' else []
-
-        return {medicine_name: medicine_data}
+        
+        return medicine_data
 
     def scrape_all_medicines(self):
         try:
@@ -183,21 +191,43 @@ class MedicineDetailsScraper:
             for link in links[start_index:]:
                 logging.info(f"Processing: {link}")
                 
-                # Random delay
-                time.sleep(random.uniform(2, 4))
+                # Add random delay between requests
+                time.sleep(random.uniform(2, 8))
 
                 medicine_info = self.process_medicine_page(link)
                 if medicine_info:
-                    medicine_data.update(medicine_info)
-                    # Save progress periodically
-                    self.save_json(medicine_data)
-                    self.save_state({'last_processed_link': link})
+                    # Check if medicine already exists to avoid duplicates
+                    existing_medicine = next(
+                        (med for med in medicine_data['medicines'] if med['name'] == medicine_info['name']), 
+                        None
+                    )
+                    
+                    if not existing_medicine:
+                        medicine_data['medicines'].append(medicine_info)
+                        # Save progress periodically
+                        self.save_json(medicine_data)
+                        self.save_state({'last_processed_link': link})
 
             logging.info("Scraping completed successfully")
 
         except Exception as e:
             logging.error(f"Unexpected error during scraping: {str(e)}")
             raise
+
+    # def add_precautions(self, precautions: Dict[str, List[str]]):
+    #     """
+    #     Method to add precautions for medicines after initial scraping
+        
+    #     :param precautions: Dictionary with medicine names as keys and lists of precautions as values
+    #     """
+    #     medicine_data = self.load_json()
+        
+    #     for medicine in medicine_data['medicines']:
+    #         if medicine['name'] in precautions:
+    #             medicine['details']['precautions'] = precautions[medicine['name']]
+        
+    #     self.save_json(medicine_data)
+    #     logging.info("Precautions added successfully")
 
 if __name__ == "__main__":
     scraper = MedicineDetailsScraper()
